@@ -9,21 +9,22 @@ import (
 
 type Delegator interface {
 	Cores //核心功能
+	Concurrency
 	Genshin()
 	ShowMembers(pattern int)
 	GetReturns() Returner
 	back() *delegator
 }
 
-// Delegatorβ 支持并发的委托接口
-type Delegatorβ interface {
-	Concurrency //并发功能
-	Delegator   //原委托接口的功能
-}
+//// Delegatorβ 支持并发的委托接口
+//type Delegatorβ interface {
+//	Concurrency //并发功能
+//	Delegator      //原委托接口的功能
+//}
 
 // Cores 委托核心功能接口
 type Cores interface {
-	Load(f interface{}, args ...interface{}) *delegator
+	Load(f interface{}, args ...interface{}) Delegator
 	Join(delegator2 Delegator) Delegator
 	Run(params ...interface{})
 }
@@ -57,18 +58,22 @@ type returner struct {
 	vals map[int]map[int]interface{}
 }
 
-// New 生成运行在主协程上的委托
-func New() Delegator {
-	return &delegator{fs: make([]func() []reflect.Value, 0), names: make([]string, 0), stop: make(chan int), start: make(chan int), returns: make(chan returner, 1), over: make(chan int, 1), typ: false}
+// New 根据参数生成不同运行模式的委托实体
+func New(args ...interface{}) Delegator {
+	if len(args) == 0 {
+		return &delegator{fs: make([]func() []reflect.Value, 0), names: make([]string, 0), stop: make(chan int), start: make(chan int), returns: make(chan returner, 1), over: make(chan int, 1), typ: false}
+	} else {
+		return &delegator{fs: make([]func() []reflect.Value, 0), names: make([]string, 0), stop: make(chan int), start: make(chan int), returns: make(chan returner, 1), over: make(chan int, 1), typ: true}
+	}
 }
 
 // New_ 生成运行在goroutine上的委托
-func New_() Delegatorβ {
-	return &delegator{fs: make([]func() []reflect.Value, 0), names: make([]string, 0), stop: make(chan int), start: make(chan int), returns: make(chan returner, 1), over: make(chan int, 1), typ: true}
-}
+//func New_() Delegatorβ {
+//	return &delegator{fs: make([]func() []reflect.Value, 0), names: make([]string, 0), stop: make(chan int), start: make(chan int), returns: make(chan returner, 1), over: make(chan int, 1), typ: true}
+//}
 
 // Load 为委托装载函数,f参数为目标函数,args为可选参数,按顺序识别,多于目标函数入参的参数无效.
-func (d *delegator) Load(f interface{}, args ...interface{}) *delegator {
+func (d *delegator) Load(f interface{}, args ...interface{}) Delegator {
 	//先获取函数的类型反射对象
 	t := reflect.TypeOf(f)
 	v := reflect.ValueOf(f)
@@ -111,17 +116,23 @@ func (d *delegator) Genshin() {
 
 // Stop 暂停运行在goroutine上的委托,不会阻塞主协程
 func (d *delegator) Stop() {
-	d.stop <- 1
+	if d.typ {
+		d.stop <- 1
+	}
 }
 
 // Start 启动运行在goroutine上的委托,不会阻塞主协程
 func (d *delegator) Start() {
-	d.start <- 1
+	if d.typ {
+		d.start <- 1
+	}
 }
 
 // Wait 等待委托执行完毕,会阻塞主协程
 func (d *delegator) Wait() {
-	d.wg.Wait()
+	if d.typ {
+		d.wg.Wait()
+	}
 }
 
 // Run 执行委托,β型委托传参激活goroutine执行
