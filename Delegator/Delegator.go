@@ -1,4 +1,4 @@
-package DelegatorTest
+package Delegator
 
 import (
 	"fmt"
