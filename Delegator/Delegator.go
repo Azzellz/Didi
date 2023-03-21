@@ -35,10 +35,12 @@ type Concurrency interface {
 	Wait()
 }
 
+// Returner 返回值获取
 type Returner interface {
 	Get(fid int, pid int) (interface{}, error)
 }
 
+// 委托实体
 type delegator struct {
 	fs      []func() []reflect.Value //函数队列
 	wg      sync.WaitGroup           //等待组
