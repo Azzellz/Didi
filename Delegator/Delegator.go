@@ -9,6 +9,7 @@ import (
 
 type Delegator interface {
 	Cores //核心功能
+	Genshin()
 	ShowMembers(pattern int)
 	GetReturns() Returner
 	back() *delegator
@@ -100,6 +101,10 @@ func (d *delegator) ShowMembers(pattern int) {
 			fmt.Println(fmt.Sprintf("第%d位:%s", i+1, d.names[i]))
 		}
 	}
+}
+
+func (d *delegator) Genshin() {
+	fmt.Println("Genshin impact")
 }
 
 // Stop 暂停运行在goroutine上的委托,不会阻塞主协程
