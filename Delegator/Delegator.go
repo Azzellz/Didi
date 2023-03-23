@@ -9,9 +9,11 @@ import (
 )
 
 const (
-	Normal = iota
-	Cycle
-	max //占位
+	Normal  = iota //标准委托
+	Cycle          //循环执行
+	TimeOut        //延时执行
+	Tick           //间隔执行
+	max            //占位
 	unEffective
 )
 
@@ -22,12 +24,6 @@ type Delegator interface {
 	carryPattern  //执行模式
 }
 
-//// Delegatorβ 支持并发的委托接口
-//type Delegatorβ interface {
-//	concurrency //并发功能
-//	Delegator      //原委托接口的功能
-//}
-
 // cores 委托核心功能接口
 type cores interface {
 	Load(f interface{}, args ...interface{}) Delegator
@@ -37,7 +33,7 @@ type cores interface {
 	Run(params ...interface{}) error
 	Genshin()
 	ShowMembers(pattern int)
-	GetReturns() Returner
+	GetReturns() (Returner, error)
 	back() *delegator
 }
 
@@ -63,6 +59,7 @@ type carryPattern interface {
 // Returner 返回值获取
 type Returner interface {
 	Get(fid int, pid int) (interface{}, error)
+	BackError() error
 }
 
 // 委托实体
@@ -92,6 +89,7 @@ type pattern struct {
 // 管理返回值的数据结构
 type returner struct {
 	vals map[int]map[int]interface{}
+	err  chan error //异步获取错误
 }
 
 // New 根据参数生成不同运行模式的委托实体
@@ -286,9 +284,9 @@ func (d *delegator) Sleep(duration time.Duration) {
 
 // 隐藏Run的细节
 func (d *delegator) run() {
+
 	//顺序执行
-	//浅浅来个简单的异步执行
-	returner := returner{vals: make(map[int]map[int]interface{})}
+	returner := returner{vals: make(map[int]map[int]interface{}), err: make(chan error, 1)}
 	//让委托执行的在一个协程里,方便委托中断
 	for i, f := range d.fs {
 		//select阻塞器,只有异步委托才会用上
@@ -326,8 +324,8 @@ func (d *delegator) Run(params ...interface{}) error {
 			d.run()
 		case Cycle:
 			//先确定ptn中的参数,
-			//这里有个短路或,只要args长度为0,就不会再执行后面的语句了,就不会发生越界访问
-			if len(d.ptn.args) == 0 || d.ptn.args[0] == -1 {
+			//不传参默认无限循环
+			if len(d.ptn.args) == 0 {
 				for {
 					select {
 					case <-d.cs.over:
@@ -341,12 +339,10 @@ func (d *delegator) Run(params ...interface{}) error {
 				count := 0
 				p := d.ptn.args[0]
 				switch v := p.(type) {
-				case string:
-					count, _ = strconv.Atoi(v)
 				case int:
 					count = v
 				default:
-					//不是int,string类型的参数则只执行一次,表示循环无效
+					//不是int类型的参数则只执行一次,表示循环无效
 					count = 1
 				}
 				for i := 0; i < count; i++ {
@@ -363,7 +359,58 @@ func (d *delegator) Run(params ...interface{}) error {
 
 				}
 			}
+		case TimeOut:
+			select {
+			case <-d.cs.over:
+				return nil
+			default:
+			}
+			//没有传参或者无效时间参数则模式无效,正常执行
+			if len(d.ptn.args) == 0 {
+				d.run()
+				d.err = fmt.Errorf("error time param ! you need to put a time.Duration type in second empty")
+				return d.err
+			}
+			t, ok := d.ptn.args[0].(time.Duration)
+			if ok {
+				time.Sleep(t)
+			} else {
+				d.err = fmt.Errorf("error time param ! you need to put a time.Duration type in second empty")
+			}
+			d.run()
 
+		case Tick: //间隔循环执行,第一个参数是间隔时间,第二个参数是次数
+			select {
+			case <-d.cs.over:
+				return nil
+			default:
+			}
+			if len(d.ptn.args) < 2 {
+				//定个标准,除了循环模式外,不传参数默认执行一次
+				d.run()
+				//无效信息,给我重新传参
+				d.err = fmt.Errorf("error tick param ! you need to put a time.Duration type in second empty,put frequency int in third empty")
+				return d.err
+			} else {
+				t, ok := d.ptn.args[0].(time.Duration)
+				n, ok1 := d.ptn.args[1].(int)
+				if ok && ok1 {
+					for i := 0; i < n; i++ {
+						d.run()
+						<-d.cs.returns
+						if i != n-1 {
+							//间隔睡眠
+							time.Sleep(t)
+						}
+					}
+				} else {
+					//定个标准,除了循环模式外,参数错误默认执行一次
+					d.run()
+					//无效信息,给我重新传参
+					d.err = fmt.Errorf("error tick param ! you need to put a time.Duration type in second empty,put frequency int in third empty")
+					return d.err
+				}
+			}
 		}
 
 	} else if params != nil && d.typ {
@@ -419,6 +466,86 @@ func (d *delegator) Run(params ...interface{}) error {
 						//这里要做下清空管道操作,防止死锁
 					}
 				}
+
+			case TimeOut:
+				select {
+				case <-d.cs.over:
+					return
+				default:
+				}
+				//没有传参或者无效时间参数则模式无效,正常执行
+				if len(d.ptn.args) == 0 {
+					d.run()
+					d.err = fmt.Errorf("error time param ! you need to put a time.Duration type in second empty")
+					//异步委托在返回前要写入通知chan
+
+					//把错误写进去
+					tmp := <-d.cs.returns
+					tmp.err <- d.err
+					d.cs.returns <- tmp
+
+					d.cs.signal <- 1
+					return
+				}
+				t, ok := d.ptn.args[0].(time.Duration)
+				if ok {
+					time.Sleep(t)
+				} else {
+					d.err = fmt.Errorf("error time param ! you need to put a time.Duration type in second empty")
+
+				}
+				d.run()
+				//把错误写进去
+				tmp := <-d.cs.returns
+				tmp.err <- d.err
+				d.cs.returns <- tmp
+
+			case Tick: //间隔循环执行,第一个参数是间隔时间,第二个参数是次数
+				select {
+				case <-d.cs.over:
+					return
+				default:
+				}
+				if len(d.ptn.args) < 2 {
+					//定个标准,除了循环模式外,不传参数默认执行一次
+					d.run()
+					//无效信息,给我重新传参
+					d.err = fmt.Errorf("error tick param ! you need to put a time.Duration type in second empty,put frequency int in third empty")
+					//异步委托在返回前要写入通知chan
+					//把错误写进去
+					tmp := <-d.cs.returns
+					tmp.err <- d.err
+					d.cs.returns <- tmp
+
+					d.cs.signal <- 1
+					return
+				} else {
+					t, ok := d.ptn.args[0].(time.Duration)
+					n, ok1 := d.ptn.args[1].(int)
+					if ok && ok1 {
+						for i := 0; i < n; i++ {
+							d.run()
+							<-d.cs.returns
+							if i != n-1 {
+								//间隔睡眠
+								time.Sleep(t)
+							}
+						}
+					} else {
+						//定个标准,除了循环模式外,参数错误默认执行一次
+						d.run()
+						//无效信息,给我重新传参
+						d.err = fmt.Errorf("error tick param ! you need to put a time.Duration type in second empty,put frequency int in third empty")
+						//异步委托在返回前要写入通知chan
+						//把错误写进去
+						tmp := <-d.cs.returns
+						tmp.err <- d.err
+						d.cs.returns <- tmp
+
+						d.cs.signal <- 1
+						return
+					}
+				}
 			}
 
 			d.cs.signal <- 1
@@ -428,13 +555,15 @@ func (d *delegator) Run(params ...interface{}) error {
 }
 
 // GetReturns 获取返回值管理单元,自带同步阻塞,会等到委托执行完毕
-func (d *delegator) GetReturns() Returner {
+func (d *delegator) GetReturns() (Returner, error) {
 	//先判断是否执行完毕,没执行完毕会等待执行完毕
 	if d.err != nil {
-		return nil
+		return nil, d.err
 	}
+	//等全部执行完了才能拿返回值
+	d.Wait()
 	tmp := <-d.cs.returns
-	return &tmp
+	return &tmp, nil
 }
 
 func (d *delegator) back() *delegator {
@@ -496,4 +625,8 @@ func (r *returner) Get(fid int, pid int) (interface{}, error) {
 		return nil, fmt.Errorf("can't find target function,fid is wrong")
 	}
 
+}
+
+func (r *returner) BackError() error {
+	return <-r.err
 }
