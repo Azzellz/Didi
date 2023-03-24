@@ -12,6 +12,7 @@ type Proxy interface {
 	Flow(index int, args ...interface{}) error
 	Delete(name string) error
 	Get(name string) (Delegator, error)
+	BackReturn(args ...interface{}) (Returner, error)
 }
 
 type proxy struct {
@@ -24,6 +25,7 @@ type delegatorUnit struct {
 	id   int
 	name string
 	d    Delegator
+	r    Returner
 }
 
 func New_() Proxy {
@@ -72,6 +74,24 @@ func (p *proxy) Delete(name string) error {
 	p.memberNums--
 
 	return nil
+}
+
+func (p *proxy) BackReturn(args ...interface{}) (Returner, error) {
+	if len(args) == 0 {
+		return nil, errors.New("wrong first param , it should be int or string")
+	}
+
+	//根据传入的第一个参数是名字还是索引来选择数据结构获取
+	switch v := args[0].(type) {
+	case int:
+		returner, err := p.dArr[v].d.GetReturns()
+		return returner, err
+	case string:
+		returner, err := p.dMap[v].d.GetReturns()
+		return returner, err
+	}
+
+	return nil, errors.New("wrong first param , it should be int or string")
 }
 
 // Execute 按map执行

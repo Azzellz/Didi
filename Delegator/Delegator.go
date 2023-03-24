@@ -71,6 +71,7 @@ type delegator struct {
 	ptn     *pattern                 //执行模式
 	err     error                    //记录错误,在委托run的时候返回
 	typ     bool                     //判断是否为异步委托
+	goRun   bool                     //判断是否激活了异步执行
 }
 
 type chans struct {
@@ -105,7 +106,8 @@ func New(args ...interface{}) Delegator {
 				over:    make(chan int),
 				returns: make(chan returner, 1),
 			},
-			typ: false,
+			typ:   false,
+			goRun: false,
 			ptn: &pattern{
 				carryPattern: 0, //默认是0
 				args:         make([]interface{}, 0),
@@ -122,7 +124,8 @@ func New(args ...interface{}) Delegator {
 				over:    make(chan int),
 				returns: make(chan returner, 1),
 			},
-			typ: true,
+			typ:   true,
+			goRun: false,
 			ptn: &pattern{
 				carryPattern: 0, //默认是0
 				args:         make([]interface{}, 0),
@@ -227,7 +230,7 @@ func (d *delegator) Stop() {
 	if d.err != nil {
 		return
 	}
-	if d.typ {
+	if d.typ && d.goRun {
 		d.cs.stop <- 1
 	}
 }
@@ -237,7 +240,7 @@ func (d *delegator) Start() {
 	if d.err != nil {
 		return
 	}
-	if d.typ {
+	if d.typ && d.goRun {
 		d.cs.start <- 1
 	}
 }
@@ -247,7 +250,7 @@ func (d *delegator) Wait() {
 	if d.err != nil {
 		return
 	}
-	if d.typ {
+	if d.typ && d.goRun {
 		select {
 		case <-d.cs.signal:
 		}
@@ -259,7 +262,7 @@ func (d *delegator) Over() {
 	if d.err != nil {
 		return
 	}
-	if d.typ {
+	if d.typ && d.goRun {
 		//这里要加select,防止委托过早执行完毕导致主线程写入阻塞
 		select {
 		case d.cs.over <- 1:
@@ -273,7 +276,7 @@ func (d *delegator) Sleep(duration time.Duration) {
 	if d.err != nil {
 		return
 	}
-	if d.typ {
+	if d.typ && d.goRun {
 		go func() {
 			d.Stop()
 			time.Sleep(duration)
@@ -414,6 +417,8 @@ func (d *delegator) Run(params ...interface{}) error {
 		}
 
 	} else if params != nil && d.typ {
+		//激活异步委托
+		d.goRun = true
 		go func() {
 			//确定执行模式
 			switch d.ptn.carryPattern {
@@ -561,7 +566,9 @@ func (d *delegator) GetReturns() (Returner, error) {
 		return nil, d.err
 	}
 	//等全部执行完了才能拿返回值
-	d.Wait()
+	if d.goRun {
+		d.Wait()
+	}
 	tmp := <-d.cs.returns
 	return &tmp, nil
 }
