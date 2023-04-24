@@ -307,6 +307,11 @@ func (d *delegator) run() {
 			returner.vals[i][j] = v2.Interface()
 		}
 	}
+	//避免外界循环调用非循环委托时发生死锁
+	select {
+	case <-d.cs.returns:
+	default:
+	}
 	d.cs.returns <- returner
 }
 
@@ -354,10 +359,10 @@ func (d *delegator) Run(params ...interface{}) error {
 						return nil
 					default:
 					}
-					if i != 0 {
-						//这里要做下清空管道操作,防止死锁
-						<-d.cs.returns
-					}
+					//if i != 0 {
+					//	//这里要做下清空管道操作,防止死锁
+					//	<-d.cs.returns
+					//}
 					d.run()
 
 				}
@@ -400,7 +405,7 @@ func (d *delegator) Run(params ...interface{}) error {
 				if ok && ok1 {
 					for i := 0; i < n; i++ {
 						d.run()
-						<-d.cs.returns
+						//<-d.cs.returns
 						if i != n-1 {
 							//间隔睡眠
 							time.Sleep(t)
@@ -441,8 +446,8 @@ func (d *delegator) Run(params ...interface{}) error {
 						default:
 						}
 						d.run()
-						//这里要做下清空管道操作,防止死锁
-						<-d.cs.returns
+						////这里要做下清空管道操作,防止死锁
+						//<-d.cs.returns
 					}
 				} else {
 					count := 0
@@ -464,9 +469,9 @@ func (d *delegator) Run(params ...interface{}) error {
 						default:
 						}
 
-						if i != 0 {
-							<-d.cs.returns
-						}
+						//if i != 0 {
+						//	<-d.cs.returns
+						//}
 						d.run()
 						//这里要做下清空管道操作,防止死锁
 					}
@@ -530,7 +535,7 @@ func (d *delegator) Run(params ...interface{}) error {
 					if ok && ok1 {
 						for i := 0; i < n; i++ {
 							d.run()
-							<-d.cs.returns
+							//<-d.cs.returns
 							if i != n-1 {
 								//间隔睡眠
 								time.Sleep(t)
