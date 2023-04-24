@@ -11,7 +11,7 @@ type TaskFunc func()
 // Pool 线程池接口
 type Pool interface {
 	Len() int
-	Assign(f TaskFunc)
+	Assign(fs ...TaskFunc)
 	Wait()
 	Trigger()
 	Now() int //返回当前空闲数
@@ -51,7 +51,7 @@ func New(cap int) Pool {
 	return p
 }
 
-func (p *pool) Assign(f TaskFunc) {
+func (p *pool) Assign(fs ...TaskFunc) {
 	if !p.live {
 		return
 	}
@@ -64,18 +64,20 @@ func (p *pool) Assign(f TaskFunc) {
 
 			w.isAssign = true //标记为已分配
 
-			p.wg.Add(1)
+			p.wg.Add(len(fs))
 
-			go func() {
+			for _, f := range fs {
+				go func() {
 
-				defer func() {
-					w.isAssign = false
-					p.wg.Done()
+					defer func() {
+						w.isAssign = false
+						p.wg.Done()
+					}()
+
+					w.Do(f)
+
 				}()
-
-				w.Do(f)
-
-			}()
+			}
 
 			return //结束分配
 		}
