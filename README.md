@@ -1,4 +1,2 @@
-# Didi's library
-
-### The delegator package provides a number of methods for you to use function in delegate
-
+# Didi
+Go原生反射库实现简易的委托功能
